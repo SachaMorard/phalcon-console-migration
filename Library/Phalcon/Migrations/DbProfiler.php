@@ -7,7 +7,7 @@ use Phalcon\Db\Profiler;
 use Phalcon\Script\Color;
 
 /**
- * Nonli\Profiler\DbProfiler
+ * Phalcon\Profiler\DbProfiler
  *
  * Displays transactions made on the database and the times them taken to execute
  */
