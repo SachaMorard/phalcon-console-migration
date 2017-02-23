@@ -3,7 +3,10 @@
 namespace Phalcon\Migrations;
 
 
+use Phalcon\Db\Adapter\Cassandra;
+use Phalcon\Db\Adapter\Pdo\Mysql;
 use Phalcon\Di\Injectable;
+use Phalcon\Events\Manager;
 
 class MigrationScript extends Injectable
 {
@@ -23,6 +26,16 @@ class MigrationScript extends Injectable
     protected $version;
 
     /**
+     * @var Cassandra
+     */
+    public $dbCassandra;
+
+    /**
+     * @var Mysql
+     */
+    public $dbMysql;
+
+    /**
      * @param \Phalcon\Config $config
      * @param null $version
      */
@@ -36,6 +49,43 @@ class MigrationScript extends Injectable
         if ($this->migrationsDir && !file_exists($this->migrationsDir)) {
             mkdir($this->migrationsDir);
         }
+
+        $this->dbCassandra = $this->getDb('cassandra');
+        $this->dbMysql = $this->getDb('mysql');
+    }
+
+    public function getDb($dbName)
+    {
+        if (strpos($dbName, 'db') === 0) {
+            $dbName = $dbName;
+        } else {
+            $dbName = 'db' . ucfirst($dbName);
+        }
+        if(!$this->getDI()->has($dbName)){
+            return null;
+        }
+        $db = $this->getDI()->get($dbName);
+
+        $profiler = new DbProfiler();
+        $newEventManager = new Manager();
+
+        /** @var Mysql $mysql */
+        $eventsManager = $db->getEventsManager();
+        if($eventsManager === null){
+            $eventsManager = $newEventManager;
+            $db->setEventsManager($eventsManager);
+        }
+        $eventsManager->attach('db', function ($event, $connection) use ($profiler) {
+
+            if ($event->getType() == 'beforeQuery') {
+                $profiler->startProfile($connection->getSQLStatement());
+            }
+            if ($event->getType() == 'afterQuery') {
+                $profiler->stopProfile();
+            }
+        });
+
+        return $db;
     }
 
 

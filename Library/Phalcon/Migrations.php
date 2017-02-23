@@ -3,7 +3,9 @@
 namespace Phalcon;
 
 use Phalcon\Annotations\ModelStrategy;
+use Phalcon\Db\Adapter\Cassandra;
 use Phalcon\Db\Adapter\Pdo\Mysql;
+use Phalcon\Events\Manager;
 use Phalcon\Logger\Adapter\File;
 use Phalcon\Migrations\DbProfiler;
 use Phalcon\Script\Color;
@@ -59,6 +61,7 @@ class Migrations extends Injectable
                 $versions[] = str_replace('.php', '', $fileinfo->getFilename());
             }
         }
+//        $this->_attachProfilerEvent();
 
         /** @var Mysql $connection */
         $connection = $this->getDI()->get('dbMysql');
@@ -117,7 +120,7 @@ class Migrations extends Injectable
             $versionsBetween = $theTwoFirstMigrations;
         }
 
-        $this->_attachProfilerEvent();
+
 
         $direction = 'up';
         foreach ($versionsBetween as $k => $v) {
@@ -141,83 +144,49 @@ class Migrations extends Injectable
 
     protected function _attachProfilerEvent()
     {
-        $logger = new File($this->config->application->logsDir . '/migrations.log');
-        $logger->notice('[ MIGRATION ] ' . date('Y-m-d H:i:s'));
         $profiler = new DbProfiler();
+        $eventsManager = new Manager();
 
-        $eventsManager = new \Phalcon\Events\Manager();
-        //Listen all the database events
-        $eventsManager->attach('db', function ($event, $connection) use ($logger, $profiler) {
+        /** @var Mysql $mysql */
+        $mysql = $this->getDI()->get('dbMysql');
+        $eventsManager = $mysql->getEventsManager();
+        if($eventsManager === null){
+            $eventsManager = $newEventManager;
+            $mysql->setEventsManager($eventsManager);
+        }
+        $eventsManager->attach('db', function ($event, $connection) use ($profiler) {
 
-            if ($connection->getDialectType() === 'mysql') {
-                /** @var \Phalcon\Events\Event $event */
-                if ($event->getType() == 'beforeQuery') {
-                    /** @var DatabaseConnection $connection */
-                    $variables = $connection->getSQLVariables();
-                    if ($variables) {
-                        $params = "";
-                        array_walk_recursive($variables, function ($item, $key) use (&$params) {
-                            $params .= $key . ':' . $item . ',';
-                        });
-
-                        $params = trim($params, ',');
-
-                        $logger->notice($connection->getSQLStatement() . ' [' . $params . ']');
-                    } else {
-                        $logger->notice($connection->getSQLStatement());
-                    }
-                }
-                if ($event->getType() == 'beforeQuery') {
-                    $profiler->startProfile($connection->getSQLStatement());
-                }
-                if ($event->getType() == 'afterQuery') {
-                    $profiler->stopProfile();
-                }
+            if ($event->getType() == 'beforeQuery') {
+                $profiler->startProfile($connection->getSQLStatement());
             }
-
-            if ($connection->getDialectType() === 'cassandra') {
-                if ($event->getType() == 'beforeQuery') {
-                    /** @var DatabaseConnection $connection */
-                    $variables = $connection->getCqlVariables();
-                    if ($variables) {
-                        foreach ($variables as $key => $var) {
-                            $variables[$key] = DataType::unpack($var);
-                            if ($variables[$key] instanceof \Datetime) {
-                                $variables[$key] = $variables[$key]->format('Y-m-d H:i:s');
-                            }
-                            if ($variables[$key] instanceof \Cassandra\Map || $variables[$key] instanceof \Cassandra\Set || $variables[$key] instanceof \Cassandra\Collection) {
-                                $variables[$key] = serialize($variables[$key]->values());
-                            }
-                            if (is_array($variables[$key])) {
-                                $variables[$key] = serialize($variables[$key]);
-                            }
-                        }
-                        $logger->notice($connection->getCQLStatement() . ' [' . join(',', $variables) . ']');
-                    } else {
-                        $logger->notice($connection->getCQLStatement());
-                    }
-                }
-                if ($event->getType() == 'beforeQuery') {
-                    $profiler->startProfile($connection->getCQLStatement());
-                }
-                if ($event->getType() == 'afterQuery') {
-                    $profiler->stopProfile();
-                }
+            if ($event->getType() == 'afterQuery') {
+                $profiler->stopProfile();
             }
-
         });
 
-        $connections = [];
-        try {
-            $connections['mysql'] = $this->getDI()->get('dbMysql');
-        } catch (\Exception $ex) {}
+//        /** @var Cassandra $connection */
+//        $cassandra = $this->getDI()->get('dbCassandra');
+//        $eventsManager = $cassandra->getEventsManager();
+//        if($eventsManager === null){
+//            $eventsManager = $newEventManager;
+//            $cassandra->setEventsManager($eventsManager);
+//        }
 
-        try {
-            $connections['cassandra'] = $this->getDI()->get('dbCassandra');
-        } catch (\Exception $ex) {}
-        foreach ($connections as $connection){
-            $connection->setEventsManager($eventsManager);
-        }
+        //Listen all the database events
+//        $eventsManager->attach('db', function ($event, $connection) use ($profiler) {
+//
+//            if ($event->getType() == 'beforeQuery') {
+//
+//                if(method_exists($connection, 'getCQLStatement')){
+//                    $profiler->startProfile($connection->getCQLStatement());
+//                }else{
+//                    $profiler->startProfile($connection->getSQLStatement());
+//                }
+//            }
+//            if ($event->getType() == 'afterQuery') {
+//                $profiler->stopProfile();
+//            }
+//        });
     }
 
     /**

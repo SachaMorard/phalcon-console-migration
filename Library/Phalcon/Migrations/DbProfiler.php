@@ -23,7 +23,6 @@ class DbProfiler extends Profiler
             return;
         }
         print '  ' . Color::colorize(str_replace(array( "\n" , "\t" ) , " " , $profile->getSQLStatement()), Color::FG_GREEN);
-
     }
 
     /**
