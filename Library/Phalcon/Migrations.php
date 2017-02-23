@@ -61,7 +61,6 @@ class Migrations extends Injectable
                 $versions[] = str_replace('.php', '', $fileinfo->getFilename());
             }
         }
-//        $this->_attachProfilerEvent();
 
         /** @var Mysql $connection */
         $connection = $this->getDI()->get('dbMysql');
@@ -140,53 +139,6 @@ class Migrations extends Injectable
         } elseif (count($versionsBetween) === 0) {
             print Color::colorize('No migration to run' . PHP_EOL . PHP_EOL, Color::FG_GREEN);
         }
-    }
-
-    protected function _attachProfilerEvent()
-    {
-        $profiler = new DbProfiler();
-        $eventsManager = new Manager();
-
-        /** @var Mysql $mysql */
-        $mysql = $this->getDI()->get('dbMysql');
-        $eventsManager = $mysql->getEventsManager();
-        if($eventsManager === null){
-            $eventsManager = $newEventManager;
-            $mysql->setEventsManager($eventsManager);
-        }
-        $eventsManager->attach('db', function ($event, $connection) use ($profiler) {
-
-            if ($event->getType() == 'beforeQuery') {
-                $profiler->startProfile($connection->getSQLStatement());
-            }
-            if ($event->getType() == 'afterQuery') {
-                $profiler->stopProfile();
-            }
-        });
-
-//        /** @var Cassandra $connection */
-//        $cassandra = $this->getDI()->get('dbCassandra');
-//        $eventsManager = $cassandra->getEventsManager();
-//        if($eventsManager === null){
-//            $eventsManager = $newEventManager;
-//            $cassandra->setEventsManager($eventsManager);
-//        }
-
-        //Listen all the database events
-//        $eventsManager->attach('db', function ($event, $connection) use ($profiler) {
-//
-//            if ($event->getType() == 'beforeQuery') {
-//
-//                if(method_exists($connection, 'getCQLStatement')){
-//                    $profiler->startProfile($connection->getCQLStatement());
-//                }else{
-//                    $profiler->startProfile($connection->getSQLStatement());
-//                }
-//            }
-//            if ($event->getType() == 'afterQuery') {
-//                $profiler->stopProfile();
-//            }
-//        });
     }
 
     /**
