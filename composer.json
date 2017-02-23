@@ -16,6 +16,9 @@
         "sachoo/phalcon-model-annotations": "1.*",
         "sachoo/phalcon-console": "1.*"
     },
+    "require-dev": {
+        "danielcosta/phalcon-stub": "~3.0.2"
+    },
     "autoload": {
         "psr-4" : {
             "Phalcon\\" : "Library/Phalcon/"
