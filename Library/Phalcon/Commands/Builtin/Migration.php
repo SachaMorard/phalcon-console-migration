@@ -80,6 +80,14 @@ class Migration extends Command
     }
 
     /**
+     * @return bool
+     */
+    public function canBeExternal()
+    {
+        return true;
+    }
+
+    /**
      * {@inheritdoc}
      *
      * @return void
