@@ -26,6 +26,7 @@ To know more about the power of Migrations, execute:
  ./console mig
 ```
 
+
 This command should display something similar to:
 
 ```sh
