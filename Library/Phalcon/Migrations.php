@@ -117,11 +117,35 @@ class Migrations extends Injectable
             $versionsBetween = $theTwoFirstMigrations;
         }
 
-        $eventsManager = new \Phalcon\Events\Manager();
+        $this->_attachProfilerEvent();
+
+        $direction = 'up';
+        foreach ($versionsBetween as $k => $v) {
+            $migrationPath = $this->migrationsDir . '/' . $v['version'] . '.php';
+            $this->_migrateFile((string)$v['version'], $migrationPath, $v['direction']);
+            if ($v['direction'] === 'down' && $k === 0) {
+                $direction = $v['direction'];
+                continue;
+            } else {
+                $connection->insert("migration", array((string)$v['version'], date('Y-m-d H:i:s')), array("version", "run_at"));
+            }
+            $direction = $v['direction'];
+
+        }
+        if (count($versionsBetween) > 0 && $direction === 'down') {
+            $connection->insert("migration", array((string)$version, date('Y-m-d H:i:s')), array("version", "run_at"));
+        } elseif (count($versionsBetween) === 0) {
+            print Color::colorize('No migration to run' . PHP_EOL . PHP_EOL, Color::FG_GREEN);
+        }
+    }
+
+    protected function _attachProfilerEvent()
+    {
         $logger = new File($this->config->application->logsDir . '/migrations.log');
         $logger->notice('[ MIGRATION ] ' . date('Y-m-d H:i:s'));
         $profiler = new DbProfiler();
 
+        $eventsManager = new \Phalcon\Events\Manager();
         //Listen all the database events
         $eventsManager->attach('db', function ($event, $connection) use ($logger, $profiler) {
 
@@ -182,25 +206,17 @@ class Migrations extends Injectable
             }
 
         });
-        $connection->setEventsManager($eventsManager);
 
-        $direction = 'up';
-        foreach ($versionsBetween as $k => $v) {
-            $migrationPath = $this->migrationsDir . '/' . $v['version'] . '.php';
-            $this->_migrateFile((string)$v['version'], $migrationPath, $v['direction']);
-            if ($v['direction'] === 'down' && $k === 0) {
-                $direction = $v['direction'];
-                continue;
-            } else {
-                $connection->insert("migration", array((string)$v['version'], date('Y-m-d H:i:s')), array("version", "run_at"));
-            }
-            $direction = $v['direction'];
+        $connections = [];
+        try {
+            $connections['mysql'] = $this->getDI()->get('dbMysql');
+        } catch (\Exception $ex) {}
 
-        }
-        if (count($versionsBetween) > 0 && $direction === 'down') {
-            $connection->insert("migration", array((string)$version, date('Y-m-d H:i:s')), array("version", "run_at"));
-        } elseif (count($versionsBetween) === 0) {
-            print Color::colorize('No migration to run' . PHP_EOL . PHP_EOL, Color::FG_GREEN);
+        try {
+            $connections['cassandra'] = $this->getDI()->get('dbCassandra');
+        } catch (\Exception $ex) {}
+        foreach ($connections as $connection){
+            $connection->setEventsManager($eventsManager);
         }
     }
 
@@ -514,9 +530,10 @@ class " . $className . " extends Migration\n" .
         $ignoreDropForeignKeys = array();
         /** @var \Phalcon\Db\Adapter $connection */
         $connection = $this->getDI()->get($dbAdapter);
-        $schema = $connection->getDescriptor()['dbname'];
         if ($dbAdapter === 'dbCassandra') {
             $schema = $connection->getDescriptor()['keyspace'];
+        }else{
+            $schema = $connection->getDescriptor()['dbname'];
         }
 
         $sql = array();

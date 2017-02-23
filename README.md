@@ -5,7 +5,7 @@ Based on sachoo/phalcon-console, this component handle databases migrations
 
 ## Requirements
 
-* PHP >= 5.5
+* PHP >= 5.6
 * Phalcon >= 3.0.0
 
 ## Installing
