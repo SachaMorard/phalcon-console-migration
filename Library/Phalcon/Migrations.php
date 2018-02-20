@@ -48,6 +48,7 @@ class Migrations extends Injectable
      * Migrations constructor.
      * @param Config $config
      * @param $migrationsDir
+     * @throws \Exception
      */
     public function __construct(\Phalcon\Config $config, $migrationsDir)
     {
@@ -57,24 +58,27 @@ class Migrations extends Injectable
         $this->migrationsDir = $migrationsDir;
 
         $adapters = [];
-        try{
+        try {
             $connection = $this->getDI()->get('dbMysql');
             $this->adapters['dbMysql'] = true;
             $this->migrationAdapter = 'dbMysql';
             $this->migrationSchemaName = $connection->getDescriptor()['dbname'];
-        } catch (\Exception $e){}
-        try{
+        } catch (\Exception $e) {
+        }
+        try {
             $connection = $this->getDI()->get('dbPostgresql');
             $this->adapters['dbPostgresql'] = true;
             $this->migrationAdapter = 'dbPostgresql';
             $this->migrationSchemaName = $connection->getDescriptor()['schema'];
-        } catch (\Exception $e){}
-        try{
+        } catch (\Exception $e) {
+        }
+        try {
             $connection = $this->getDI()->get('dbCassandra');
             $this->adapters['dbCassandra'] = true;
-        } catch (\Exception $e){}
+        } catch (\Exception $e) {
+        }
 
-        if($this->migrationSchemaName === null){
+        if ($this->migrationSchemaName === null) {
             throw new \Exception('You need at least Mysql or Postgresql to enable migration feature');
         }
 
@@ -104,7 +108,7 @@ class Migrations extends Injectable
         try {
             $lastMig = $connection->fetchOne('SELECT * FROM migration ORDER BY id DESC', \PDO::FETCH_ASSOC);
         } catch (\PDOException $ex) {
-            if($this->migrationAdapter === 'dbMysql'){
+            if ($this->migrationAdapter === 'dbMysql') {
                 $connection->query('CREATE TABLE migration (`id` INT NOT NULL AUTO_INCREMENT,`version` VARCHAR(45) NOT NULL,`run_at` DATETIME NOT NULL, PRIMARY KEY (`id`))');
             } else {
                 $connection->query('CREATE TABLE "public"."migration" ("id" SERIAL NOT NULL,"version" CHARACTER VARYING(45),"run_at" TIMESTAMP,PRIMARY KEY ("id"));');
@@ -276,8 +280,7 @@ class " . $className . " extends Migration\n" .
     }
 
     /**
-     * Diff migrations
-     *
+     * @throws CommandsException
      * @throws Exception
      */
     public function diff()
@@ -386,28 +389,14 @@ class " . $className . " extends Migration\n" .
                     $relation['referencedFields'][] = $c[1][$f];
                 }
 
-                $foreignKey = $referenceField->getForeignKey();
-                if (is_array($foreignKey) && isset($foreignKey['action'])) {
-                    switch ($foreignKey['action']) {
-                        case \Phalcon\Mvc\Model\Relation::ACTION_CASCADE :
-                            $relation['action'] = 'CASCADE';
-                            break;
-                        case \Phalcon\Mvc\Model\Relation::NO_ACTION :
-                            $relation['action'] = 'NO ACTION';
-                            break;
-                        default:
-                            $relation['action'] = 'RESTRICT';
-                            break;
-                    }
-                } else {
-                    $relation['action'] = 'RESTRICT';
-                }
+                $relation['action'] = $referenceField->getOption('action') ? $referenceField->getOption('action') : 'RESTRICT';
 
-                $relation['name'] = 'FK_' . strtoupper($relation['table'] . '_' . $relation['referencedTable']);
+                $defaultName = 'FK_' . strtoupper($relation['table'] . '_' . $relation['referencedTable']);
+                $relation['name'] = $referenceField->getOption('name') ? $referenceField->getOption('name') : $defaultName;
+
                 $foreignKeys[] = $relation;
             }
         }
-        //$referencesFields = $modelsManager->getRelations($modelName);
 
 
         foreach ($fieldTypes as $fieldName => $type) {
@@ -503,28 +492,13 @@ class " . $className . " extends Migration\n" .
                     $relation['referencedFields'][] = $c[1][$f];
                 }
 
-                $foreignKey = $referenceField->getForeignKey();
-                if (is_array($foreignKey) && isset($foreignKey['action'])) {
-                    switch ($foreignKey['action']) {
-                        case \Phalcon\Mvc\Model\Relation::ACTION_CASCADE :
-                            $relation['action'] = 'CASCADE';
-                            break;
-                        case \Phalcon\Mvc\Model\Relation::NO_ACTION :
-                            $relation['action'] = 'NO ACTION';
-                            break;
-                        default:
-                            $relation['action'] = 'RESTRICT';
-                            break;
-                    }
-                } else {
-                    $relation['action'] = 'RESTRICT';
-                }
+                $relation['action'] = $referenceField->getOption('action') ? $referenceField->getOption('action') : 'RESTRICT';
 
-                $relation['name'] = 'FK_' . strtoupper($relation['table'] . '_' . $relation['referencedTable']);
+                $defaultName = 'FK_' . strtoupper($relation['table'] . '_' . $relation['referencedTable']);
+                $relation['name'] = $referenceField->getOption('name') ? $referenceField->getOption('name') : $defaultName;
                 $foreignKeys[] = $relation;
             }
         }
-        //$referencesFields = $modelsManager->getRelations($modelName);
 
         $primaryKeys = $modelsMetadata->getPrimaryKeyAttributes($model);
         foreach ($fieldTypes as $fieldName => $type) {
@@ -694,7 +668,7 @@ class " . $className . " extends Migration\n" .
                         }
 
                         if ($changed == true) {
-                            $existingForeignKeys = array();
+                            $existingForeignKeys = [];
 
                             // We check if there is a foreign key constraint
                             if ($dbAdapter === 'dbMysql') {
@@ -706,7 +680,29 @@ class " . $className . " extends Migration\n" .
                                     $r['DELETE_RULE'] = $rules['DELETE_RULE'];
 
                                     /**
-                                     * TODO DROP FOREIGN KEY
+                                     * DROP FOREIGN KEY BECAUSE WE CHANGE THE CURRENT COLUMN
+                                     */
+                                    $rawSql = $connection->getDialect()->dropForeignKey($r['TABLE_NAME'], $r['TABLE_SCHEMA'], $r['CONSTRAINT_NAME']);
+                                    $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
+                                    $existingForeignKeys[] = $r;
+                                }
+                            } elseif ($dbAdapter === 'dbPostgresql') {
+                                $sqlconstraint = $this->getPGSQLConstraint($tableName, $tableColumn->getName());
+                                $results = $connection->query($sqlconstraint);
+                                foreach ($results->fetchAll() as $r) {
+
+                                    $r['UPDATE_RULE'] = $r['on_update'];
+                                    $r['DELETE_RULE'] = $r['on_delete'];
+                                    $r['TABLE_NAME'] = $r['table_name'];
+                                    $r['TABLE_SCHEMA'] = $r['constraint_schema'];
+                                    $r['CONSTRAINT_NAME'] = $r['constraint_name'];
+                                    $r['REFERENCED_TABLE_SCHEMA'] = $r['constraint_schema'];
+                                    $r['REFERENCED_TABLE_NAME'] = $r['references_table'];
+                                    $r['REFERENCED_COLUMN_NAME'] = $r['references_field'];
+                                    $r['COLUMN_NAME'] = $r['column_name'];
+
+                                    /**
+                                     * DROP FOREIGN KEY BECAUSE WE CHANGE THE CURRENT COLUMN
                                      */
                                     $rawSql = $connection->getDialect()->dropForeignKey($r['TABLE_NAME'], $r['TABLE_SCHEMA'], $r['CONSTRAINT_NAME']);
                                     $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
@@ -727,7 +723,7 @@ class " . $className . " extends Migration\n" .
                             if ($existingForeignKeys) {
                                 foreach ($existingForeignKeys as $r) {
                                     /**
-                                     * TODO ADD FOREIGN KEY AFTER DROP ONE (TO CHANGE IT)
+                                     * ADD FOREIGN KEY AFTER DROP ONE (TO CHANGE IT)
                                      */
                                     $rawSql = $connection->getDialect()->addForeignKey(
                                         $r['TABLE_NAME'],
@@ -751,7 +747,7 @@ class " . $className . " extends Migration\n" .
                 }
 
                 /**
-                 * TODO DROP COLUMN (and foreign key)
+                 * DROP COLUMN (and foreign key)
                  */
                 foreach ($localFields as $fieldName => $localField) {
                     if (!isset($fields[$fieldName])) {
@@ -763,6 +759,14 @@ class " . $className . " extends Migration\n" .
                                 $rawSql = $connection->getDialect()->dropForeignKey($r['TABLE_NAME'], $r['TABLE_SCHEMA'], $r['CONSTRAINT_NAME']);
                                 $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
                             }
+                        } elseif ($dbAdapter === 'dbPostgresql') {
+                            $sqlconstraint = $this->getPGSQLConstraint($tableName, $fieldName);
+                            $results = $connection->query($sqlconstraint);
+                            foreach ($results->fetchAll() as $r) {
+                                $ignoreDropForeignKeys[] = $r['CONSTRAINT_NAME'];
+                                $rawSql = $connection->getDialect()->dropForeignKey($r['table_name'], $r['constraint_schema'], $r['constraint_name']);
+                                $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
+                            }
                         }
                         $rawSql = $connection->getDialect()->dropColumn($tableName, $schema, $fieldName);
                         $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
@@ -770,48 +774,60 @@ class " . $className . " extends Migration\n" .
                 }
             } else {
                 /**
-                 * TODO CREATE TABLE IF NOT EXISTS
+                 * CREATE TABLE IF NOT EXISTS
                  */
                 $rawSql = $connection->getDialect()->createTable($tableName, $schema, $definition);
-                if($dbAdapter === 'dbPostgresql'){
+                if ($dbAdapter === 'dbPostgresql') {
                     $sqlInstructions = explode(';', $rawSql);
-                    foreach ($sqlInstructions as $instruction){
-                        if($instruction !== "" && strpos($instruction, '_pkey" ON') === false){
+                    foreach ($sqlInstructions as $instruction) {
+                        if ($instruction !== "" && strpos($instruction, '_pkey" ON') === false) {
                             $sql[] = '$this->' . $dbAdapter . '->query(\'' . $instruction . '\');';
                         }
                     }
                 } else {
                     $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
                 }
-                
+
             }
         }
 
         /**
-         * TODO DROP FOREIGN KEY
+         * DROP FOREIGN KEY
          */
-        if ($tableExists === true && $dbAdapter === 'dbMysql') {
+        if ($tableExists === true && ($dbAdapter === 'dbMysql' || $dbAdapter === 'dbPostgresql')) {
             $actualReferences = $connection->describeReferences($tableName, $schema);
             /* @var $actualReference \Phalcon\Db\Reference */
             foreach ($actualReferences as $actualReference) {
                 $foreignKeyExists = false;
 
                 for ($i = count($foreignKeys) - 1; $i >= 0; --$i) {
-                    $rules = $connection->query('SELECT UPDATE_RULE, DELETE_RULE FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_NAME="' . $actualReference->getName() . '" AND CONSTRAINT_SCHEMA ="' . $actualReference->getReferencedSchema() . '"');
-                    $rules = $rules->fetch();
+                    if ($dbAdapter === 'dbMysql') {
+                        $rules = $connection->query('SELECT UPDATE_RULE, DELETE_RULE FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_NAME="' . $actualReference->getName() . '" AND CONSTRAINT_SCHEMA ="' . $actualReference->getReferencedSchema() . '"');
+                        $rules = $rules->fetch();
 
-                    if ($tableName === $foreignKeys[$i]['table']
-                        && $actualReference->getReferencedTable() === $foreignKeys[$i]['referencedTable']
-                        && count(array_diff($actualReference->getColumns(), $foreignKeys[$i]['fields'])) === 0
-                        && count(array_diff($actualReference->getReferencedColumns(), $foreignKeys[$i]['referencedFields'])) === 0
-                        // TODO : réactiver cette ligne si Phalcon prend en compte la méthode : && $actualReference->getOnUpdate() === $foreignKeys[$i]['action']
-                        && $rules['UPDATE_RULE'] === $foreignKeys[$i]['action']
-                        // TODO : réactiver cette ligne si Phalcon prend en compte la méthode : && $actualReference->getOnDelete() === $foreignKeys[$i]['action']) {
-                        && $rules['DELETE_RULE'] === $foreignKeys[$i]['action']
-                    ) {
-                        $foreignKeyExists = true;
-                        array_splice($foreignKeys, $i, 1);
-                        break;
+                        if ($tableName === $foreignKeys[$i]['table']
+                            && $actualReference->getReferencedTable() === $foreignKeys[$i]['referencedTable']
+                            && count(array_diff($actualReference->getColumns(), $foreignKeys[$i]['fields'])) === 0
+                            && count(array_diff($actualReference->getReferencedColumns(), $foreignKeys[$i]['referencedFields'])) === 0
+                            // TODO : réactiver cette ligne si Phalcon prend en compte la méthode : && $actualReference->getOnUpdate() === $foreignKeys[$i]['action']
+                            && $rules['UPDATE_RULE'] === $foreignKeys[$i]['action']
+                            // TODO : réactiver cette ligne si Phalcon prend en compte la méthode : && $actualReference->getOnDelete() === $foreignKeys[$i]['action']) {
+                            && $rules['DELETE_RULE'] === $foreignKeys[$i]['action']
+                        ) {
+                            $foreignKeyExists = true;
+                            array_splice($foreignKeys, $i, 1);
+                            break;
+                        }
+                    } else {
+                        if ($tableName === $foreignKeys[$i]['table']
+                            && $actualReference->getReferencedTable() === $foreignKeys[$i]['referencedTable']
+                            && count(array_diff($actualReference->getColumns(), $foreignKeys[$i]['fields'])) === 0
+                            && count(array_diff($actualReference->getReferencedColumns(), $foreignKeys[$i]['referencedFields'])) === 0
+                        ) {
+                            $foreignKeyExists = true;
+                            array_splice($foreignKeys, $i, 1);
+                            break;
+                        }
                     }
                 }
 
@@ -827,7 +843,7 @@ class " . $className . " extends Migration\n" .
         }
 
         /**
-         * TODO ADD FOREIGN KEY
+         * ADD FOREIGN KEY
          */
         if ($foreignKeys) {
             foreach ($foreignKeys as $foreignKey) {
@@ -891,7 +907,6 @@ class " . $className . " extends Migration\n" .
                 }
 
                 foreach ($definition['indexes'] as $tableIndex) {
-                    // hack for encoging problem
                     $tableIndexName = $tableIndex->getName();
                     if (!isset($localIndexes[$tableIndexName])) {
                         if ($tableIndexName == 'PRIMARY') {
@@ -933,7 +948,41 @@ class " . $className . " extends Migration\n" .
     }
 
     /**
-     * @param array $adapters
+     * @param $tableName
+     * @param $fieldName
+     * @return string
+     */
+    public function getPGSQLConstraint($tableName, $fieldName)
+    {
+        $sqlconstraint = <<<EOT
+SELECT 
+tc.constraint_name, 
+tc.constraint_schema, 
+tc.table_name, 
+kcu.column_name, 
+rc.update_rule AS on_update, 
+rc.delete_rule AS on_delete,
+ccu.table_name AS references_table,
+ccu.column_name AS references_field
+FROM information_schema.table_constraints tc
+LEFT JOIN information_schema.key_column_usage kcu
+  ON tc.constraint_catalog = kcu.constraint_catalog
+  AND tc.constraint_schema = kcu.constraint_schema
+  AND tc.constraint_name = kcu.constraint_name
+LEFT JOIN information_schema.referential_constraints rc
+  ON tc.constraint_catalog = rc.constraint_catalog
+  AND tc.constraint_schema = rc.constraint_schema
+  AND tc.constraint_name = rc.constraint_name
+LEFT JOIN information_schema.constraint_column_usage ccu
+  ON rc.unique_constraint_catalog = ccu.constraint_catalog
+  AND rc.unique_constraint_schema = ccu.constraint_schema
+  AND rc.unique_constraint_name = ccu.constraint_name
+WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name='$tableName' AND kcu.column_name='$fieldName'
+EOT;
+        return $sqlconstraint;
+    }
+
+    /**
      * @param $tableDetails
      * @return array
      */
