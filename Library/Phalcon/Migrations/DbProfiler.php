@@ -22,18 +22,10 @@ class DbProfiler extends Profiler
         if(strpos($profile->getSQLStatement(), 'INSERT INTO `migration`') === 0){
             return;
         }
-        print '  ' . Color::colorize(str_replace(array( "\n" , "\t" ) , " " , $profile->getSQLStatement()), Color::FG_GREEN);
-    }
-
-    /**
-     * @param $profile DbProfiler
-     */
-    public function afterEndProfile($profile)
-    {
-        if(strpos($profile->getSQLStatement(), 'INSERT INTO `migration`') === 0){
+        if(strpos($profile->getSQLStatement(), 'INSERT INTO "migration"') === 0){
             return;
         }
-        echo ' => Elapsed Time: ' . ($profile->getTotalElapsedSeconds()) . PHP_EOL;
+        print '  ' . Color::colorize(str_replace(array( "\n" , "\t" ) , " " , $profile->getSQLStatement()) . PHP_EOL, Color::FG_GREEN);
     }
 
 }

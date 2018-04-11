@@ -52,6 +52,7 @@ class MigrationScript extends Injectable
 
         $this->dbCassandra = $this->getDb('cassandra');
         $this->dbMysql = $this->getDb('mysql');
+        $this->dbPostgresql = $this->getDb('postgresql');
     }
 
     public function getDb($dbName)
