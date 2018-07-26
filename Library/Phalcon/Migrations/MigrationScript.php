@@ -55,6 +55,10 @@ class MigrationScript extends Injectable
         $this->dbPostgresql = $this->getDb('postgresql');
     }
 
+    /**
+     * @param $dbName
+     * @return null
+     */
     public function getDb($dbName)
     {
         if (strpos($dbName, 'db') === 0) {
@@ -62,7 +66,7 @@ class MigrationScript extends Injectable
         } else {
             $dbName = 'db' . ucfirst($dbName);
         }
-        if(!$this->getDI()->has($dbName)){
+        if (!$this->getDI()->has($dbName)) {
             return null;
         }
         $db = $this->getDI()->get($dbName);
@@ -72,7 +76,7 @@ class MigrationScript extends Injectable
 
         /** @var Mysql $mysql */
         $eventsManager = $db->getEventsManager();
-        if($eventsManager === null){
+        if ($eventsManager === null) {
             $eventsManager = $newEventManager;
             $db->setEventsManager($eventsManager);
         }
@@ -98,7 +102,7 @@ class MigrationScript extends Injectable
      */
     public function batchInsert(\Phalcon\Db\Adapter $connection, $tableName, $fields)
     {
-        $migrationData = $this->migrationsDir.'/'.$this->version.'/'.$tableName.'.dat';
+        $migrationData = $this->migrationsDir . '/' . $this->version . '/' . $tableName . '.dat';
         if (file_exists($migrationData)) {
             $connection->begin();
             $batchHandler = fopen($migrationData, 'r');

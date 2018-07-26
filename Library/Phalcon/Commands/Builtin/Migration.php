@@ -16,25 +16,20 @@ use Phalcon\Migrations;
 class Migration extends Command
 {
     /**
-     * {@inheritdoc}
-     *
      * @return array
      */
     public function getPossibleParams()
     {
         return [
-            'action=s'          => 'Generates a Migration [generate|run]',
-            'version=s'         => "Version to migrate.",
-            'help'              => 'Shows this help [optional]',
+            'action=s' => 'Generates a Migration [generate|run]',
+            'version=s' => "Version to migrate.",
+            'help' => 'Shows this help [optional]',
         ];
     }
 
     /**
-     * {@inheritdoc}
-     *
      * @param array $parameters
-     *
-     * @return mixed
+     * @throws \Exception
      */
     public function run(array $parameters)
     {
@@ -70,8 +65,6 @@ class Migration extends Command
     }
 
     /**
-     * {@inheritdoc}
-     *
      * @return array
      */
     public function getCommands()
@@ -88,9 +81,7 @@ class Migration extends Command
     }
 
     /**
-     * {@inheritdoc}
      *
-     * @return void
      */
     public function getHelp()
     {
@@ -123,9 +114,7 @@ class Migration extends Command
     }
 
     /**
-     * {@inheritdoc}
-     *
-     * @return integer
+     * @return int
      */
     public function getRequiredParams()
     {

@@ -80,6 +80,6 @@ class Version
                 $betweenVersions[] = array('version' => $version, 'direction' => $direction);
             }
         }
-        return $betweenVersions ;
+        return $betweenVersions;
     }
 }

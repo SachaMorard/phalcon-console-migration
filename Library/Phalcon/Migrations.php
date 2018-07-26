@@ -43,6 +43,11 @@ class Migrations extends Injectable
      */
     protected $migrationSchemaName;
 
+    /**
+     * @var
+     */
+    public static $PREVIOUS_MIG;
+
 
     /**
      * Migrations constructor.
@@ -166,24 +171,31 @@ class Migrations extends Injectable
         }
 
 
-        $direction = 'up';
-        foreach ($versionsBetween as $k => $v) {
-            $migrationPath = $this->migrationsDir . '/' . $v['version'] . '.php';
-            $this->_migrateFile((string)$v['version'], $migrationPath, $v['direction']);
-            if ($v['direction'] === 'down' && $k === 0) {
+        try {
+            $direction = 'up';
+            foreach ($versionsBetween as $k => $v) {
+                $migrationPath = $this->migrationsDir . '/' . $v['version'] . '.php';
+                $this->_migrateFile((string)$v['version'], $migrationPath, $v['direction']);
+                if ($v['direction'] === 'down' && $k === 0) {
+                    $direction = $v['direction'];
+                    continue;
+                } else {
+                    $connection->insert("migration", array((string)$v['version'], date('Y-m-d H:i:s')), array("version", "run_at"));
+                }
                 $direction = $v['direction'];
-                continue;
-            } else {
-                $connection->insert("migration", array((string)$v['version'], date('Y-m-d H:i:s')), array("version", "run_at"));
-            }
-            $direction = $v['direction'];
 
+            }
+            if (count($versionsBetween) > 0 && $direction === 'down') {
+                $connection->insert("migration", array((string)$version, date('Y-m-d H:i:s')), array("version", "run_at"));
+            } elseif (count($versionsBetween) === 0) {
+                print Color::colorize('No migration to run' . PHP_EOL . PHP_EOL, Color::FG_GREEN);
+            }
+            exit(0);
+        } catch (\Throwable $e){
+            print PHP_EOL . Color::error($e->getMessage()) . PHP_EOL;
+            exit(1);
         }
-        if (count($versionsBetween) > 0 && $direction === 'down') {
-            $connection->insert("migration", array((string)$version, date('Y-m-d H:i:s')), array("version", "run_at"));
-        } elseif (count($versionsBetween) === 0) {
-            print Color::colorize('No migration to run' . PHP_EOL . PHP_EOL, Color::FG_GREEN);
-        }
+
     }
 
     /**
@@ -280,8 +292,7 @@ class " . $className . " extends Migration\n" .
     }
 
     /**
-     * @throws CommandsException
-     * @throws Exception
+     * @throws \ReflectionException
      */
     public function diff()
     {

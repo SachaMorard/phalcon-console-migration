@@ -4,12 +4,13 @@
 namespace Phalcon\Migrations;
 
 use Phalcon\Db\Profiler;
+use Phalcon\Migrations;
 use Phalcon\Script\Color;
 
 /**
  * Phalcon\Profiler\DbProfiler
  *
- * Displays transactions made on the database and the times them taken to execute
+ * Displays transactions made on the database
  */
 class DbProfiler extends Profiler
 {
@@ -19,13 +20,18 @@ class DbProfiler extends Profiler
      */
     public function beforeStartProfile($profile)
     {
-        if(strpos($profile->getSQLStatement(), 'INSERT INTO `migration`') === 0){
+        $sql = $profile->getSQLStatement();
+        if ($sql === Migrations::$PREVIOUS_MIG) {
             return;
         }
-        if(strpos($profile->getSQLStatement(), 'INSERT INTO "migration"') === 0){
+        Migrations::$PREVIOUS_MIG = $sql;
+        if (strpos($sql, 'INSERT INTO `migration`') === 0) {
             return;
         }
-        print '  ' . Color::colorize(str_replace(array( "\n" , "\t" ) , " " , $profile->getSQLStatement()) . PHP_EOL, Color::FG_GREEN);
+        if (strpos($sql, 'INSERT INTO "migration"') === 0) {
+            return;
+        }
+        print '  ' . Color::colorize(str_replace(array("\n", "\t"), " ", $sql) . PHP_EOL, Color::FG_GREEN);
     }
 
 }
