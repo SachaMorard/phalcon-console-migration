@@ -4,6 +4,7 @@ namespace Phalcon\Migrations;
 
 
 use Phalcon\Db\Adapter\Cassandra;
+use Phalcon\Db\Adapter\Pdo;
 use Phalcon\Db\Adapter\Pdo\Mysql;
 use Phalcon\Di\Injectable;
 use Phalcon\Events\Manager;
@@ -26,16 +27,6 @@ class MigrationScript extends Injectable
     protected $version;
 
     /**
-     * @var Cassandra
-     */
-    public $dbCassandra;
-
-    /**
-     * @var Mysql
-     */
-    public $dbMysql;
-
-    /**
      * @param \Phalcon\Config $config
      * @param null $version
      */
@@ -50,27 +41,20 @@ class MigrationScript extends Injectable
             mkdir($this->migrationsDir);
         }
 
-        $this->dbCassandra = $this->getDb('cassandra');
-        $this->dbMysql = $this->getDb('mysql');
-        $this->dbPostgresql = $this->getDb('postgresql');
+        foreach ($this->getDI()->getServices() as $s) {
+            $service = $this->getDI()->get($s->getName());
+            if ($service instanceof Pdo) {
+                $this->{$s->getName()} = $this->getDb($service);
+            }
+        }
     }
 
     /**
-     * @param $dbName
-     * @return null
+     * @param Pdo $db
+     * @return mixed|Pdo
      */
-    public function getDb($dbName)
+    public function getDb(Pdo $db)
     {
-        if (strpos($dbName, 'db') === 0) {
-            $dbName = $dbName;
-        } else {
-            $dbName = 'db' . ucfirst($dbName);
-        }
-        if (!$this->getDI()->has($dbName)) {
-            return null;
-        }
-        $db = $this->getDI()->get($dbName);
-
         $profiler = new DbProfiler();
         $newEventManager = new Manager();
 

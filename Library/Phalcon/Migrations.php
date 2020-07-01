@@ -4,10 +4,11 @@ namespace Phalcon;
 
 use Phalcon\Annotations\ModelStrategy;
 use Phalcon\Db\Adapter\Cassandra;
+use Phalcon\Db\Adapter\Pdo;
 use Phalcon\Db\Adapter\Pdo\Mysql;
 use Phalcon\Events\Manager;
 use Phalcon\Logger\Adapter\File;
-use Phalcon\Migrations\DbProfiler;
+use Phalcon\Mvc\ModelInterface;
 use Phalcon\Script\Color;
 use Phalcon\Migrations\Version;
 use Phalcon\Commands\CommandsException;
@@ -62,29 +63,25 @@ class Migrations extends Injectable
         $this->config->application->debug = true;
         $this->migrationsDir = $migrationsDir;
 
-        $adapters = [];
-        try {
-            $connection = $this->getDI()->get('dbMysql');
-            $this->adapters['dbMysql'] = true;
-            $this->migrationAdapter = 'dbMysql';
-            $this->migrationSchemaName = $connection->getDescriptor()['dbname'];
-        } catch (\Exception $e) {
+        foreach ($this->getDI()->getServices() as $s) {
+            $service = $this->getDI()->get($s->getName());
+            if ($service instanceof Pdo) {
+                $this->adapters[] = $s->getName();
+            }
         }
-        try {
+
+        if ($this->getDI()->has('dbPostgresql')) {
             $connection = $this->getDI()->get('dbPostgresql');
-            $this->adapters['dbPostgresql'] = true;
             $this->migrationAdapter = 'dbPostgresql';
             $this->migrationSchemaName = $connection->getDescriptor()['schema'];
-        } catch (\Exception $e) {
-        }
-        try {
-            $connection = $this->getDI()->get('dbCassandra');
-            $this->adapters['dbCassandra'] = true;
-        } catch (\Exception $e) {
+        } elseif ($this->getDI()->has('dbMysql')) {
+            $connection = $this->getDI()->get('dbMysql');
+            $this->migrationAdapter = 'dbMysql';
+            $this->migrationSchemaName = $connection->getDescriptor()['dbname'];
         }
 
         if ($this->migrationSchemaName === null) {
-            throw new \Exception('You need at least Mysql or Postgresql to enable migration feature');
+            throw new \Exception('You need at least dbMysql or dbPostgresql di service to enable migration feature');
         }
 
         if ($this->migrationsDir && !file_exists($this->migrationsDir)) {
@@ -314,17 +311,16 @@ class " . $className . " extends Migration\n" .
                 }
                 $model = $modelsManager->load($modelName, true);
 
-                if ($model->getReadConnectionService() === 'dbMysql') {
-                    $tableDetails = $this->_detailMysqlTable($modelName, $model);
-                } elseif ($model->getReadConnectionService() === 'dbCassandra') {
-                    $tableDetails = $this->_detailCassandraTable($modelName, $model);
-                } elseif ($model->getReadConnectionService() === 'dbPostgresql') {
+                if ($model->getReadConnection()->getDialectType() === 'postgresql') {
                     $tableDetails = $this->_detailPostgresqlTable($modelName, $model);
+                } elseif ($model->getReadConnection()->getDialectType() === 'mysql') {
+                    $tableDetails = $this->_detailMysqlTable($modelName, $model);
+                } elseif ($model->getReadConnection()->getDialectType() === 'cassandra') {
+                    $tableDetails = $this->_detailCassandraTable($modelName, $model);
                 }
 
                 $globalTablesDetails[] = $tableDetails;
-
-                $sqlInstruction = $this->_morphTable($tableDetails['table'], array("columns" => $tableDetails['tableDefinition'], "indexes" => $tableDetails['indexesDefinition']), $tableDetails['foreignKeys'], $tableDetails['dbAdapter']);
+                $sqlInstruction = $this->_morphTable($tableDetails, $model);
 
                 $sql[] = implode("\n        ", str_replace("\t", '', str_replace("\n", '', $sqlInstruction))) . "\n        ";
             }
@@ -445,7 +441,7 @@ class " . $className . " extends Migration\n" .
             'tableDefinition' => $tableDefinition,
             'indexesDefinition' => $indexesDefinition,
             'foreignKeys' => $foreignKeys,
-            'dbAdapter' => 'dbMysql'
+            'dbAdapter' => $model->getWriteConnectionService()
         );
     }
 
@@ -551,7 +547,7 @@ class " . $className . " extends Migration\n" .
             'tableDefinition' => $tableDefinition,
             'indexesDefinition' => $indexesDefinition,
             'foreignKeys' => $foreignKeys,
-            'dbAdapter' => 'dbPostgresql'
+            'dbAdapter' => $model->getWriteConnectionService()
         );
     }
 
@@ -588,31 +584,34 @@ class " . $className . " extends Migration\n" .
             'tableDefinition' => $tableDefinition,
             'indexesDefinition' => $indexesDefinition,
             'foreignKeys' => [],
-            'dbAdapter' => 'dbCassandra'
+            'dbAdapter' => $model->getWriteConnectionService()
         );
     }
 
 
     /**
-     * Look for table definition modifications and apply to real table
-     *
-     * @param $tableName
-     * @param $definition
-     * @param $foreignKeys
+     * @param array $tableDetails
+     * @param ModelInterface $model
      * @return array
      * @throws Exception
      */
-    protected function _morphTable($tableName, $definition, $foreignKeys, $dbAdapter)
+    protected function _morphTable(array $tableDetails, ModelInterface $model)
     {
+        $tableName = $tableDetails['table'];
+        $definition = ["columns" => $tableDetails['tableDefinition'], "indexes" => $tableDetails['indexesDefinition']];
+        $foreignKeys = $tableDetails['foreignKeys'];
+        $dbAdapter = $tableDetails['dbAdapter'];
+        $dialectType = $model->getReadConnection()->getDialectType();
         $ignoreDropForeignKeys = array();
         /** @var \Phalcon\Db\Adapter $connection */
-        $connection = $this->getDI()->get($dbAdapter);
-        if ($dbAdapter === 'dbCassandra') {
-            $schema = $connection->getDescriptor()['keyspace'];
-        } elseif ($dbAdapter === 'dbPostgresql') {
+        $connection = $model->getReadConnection();
+
+        if ($dialectType === 'postgresql') {
             $schema = $connection->getDescriptor()['schema'];
-        } else {
+        } elseif ($dialectType === 'mysql') {
             $schema = $connection->getDescriptor()['dbname'];
+        } elseif ($dialectType === 'cassandra') {
+            $schema = $connection->getDescriptor()['keyspace'];
         }
 
         $sql = array();
@@ -640,7 +639,7 @@ class " . $className . " extends Migration\n" .
                 }
 
                 foreach ($fields as $fieldName => $tableColumn) {
-                    if ($dbAdapter === 'dbPostgresql') {
+                    if ($dialectType === 'postgresql') {
                         $schema = $connection->getDescriptor()['schema'];
                     }
 
@@ -663,7 +662,7 @@ class " . $className . " extends Migration\n" .
                             // and current annotation is "boolean", we don't notify change
                             // because when we save a boolean column in MySQL it's converted to INT(1)
                             // It prevents executing useless DB updates on each run
-                            if ($dbAdapter !== 'dbMysql' || $localFields[$fieldName]->getType() !== \Phalcon\Db\Column::TYPE_INTEGER
+                            if ($dialectType !== 'mysql' || $localFields[$fieldName]->getType() !== \Phalcon\Db\Column::TYPE_INTEGER
                                 || $localFields[$fieldName]->getSize() !== 1 || $tableColumn->getType() !== \Phalcon\Db\Column::TYPE_BOOLEAN
                             ) {
                                 $changed = true;
@@ -682,7 +681,7 @@ class " . $className . " extends Migration\n" .
                             $existingForeignKeys = [];
 
                             // We check if there is a foreign key constraint
-                            if ($dbAdapter === 'dbMysql') {
+                            if ($dialectType === 'mysql') {
                                 $results = $connection->query("SELECT TABLE_SCHEMA,TABLE_NAME,COLUMN_NAME,CONSTRAINT_NAME,REFERENCED_TABLE_SCHEMA,REFERENCED_TABLE_NAME,REFERENCED_COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE REFERENCED_TABLE_SCHEMA = '" . $connection->getDescriptor()['dbname'] . "' AND REFERENCED_TABLE_NAME = '" . $tableName . "' AND REFERENCED_COLUMN_NAME = '" . $tableColumn->getName() . "'");
                                 foreach ($results->fetchAll() as $r) {
                                     $rules = $connection->query('SELECT UPDATE_RULE, DELETE_RULE FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_NAME="' . $r['CONSTRAINT_NAME'] . '" AND CONSTRAINT_SCHEMA ="' . $r['TABLE_SCHEMA'] . '"');
@@ -697,7 +696,7 @@ class " . $className . " extends Migration\n" .
                                     $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
                                     $existingForeignKeys[] = $r;
                                 }
-                            } elseif ($dbAdapter === 'dbPostgresql') {
+                            } elseif ($dialectType === 'postgresql') {
                                 $sqlconstraint = $this->getPGSQLConstraint($tableName, $tableColumn->getName());
                                 $results = $connection->query($sqlconstraint);
                                 foreach ($results->fetchAll() as $r) {
@@ -724,7 +723,7 @@ class " . $className . " extends Migration\n" .
                             /**
                              * ALTER TABLE
                              */
-                            if ($dbAdapter === 'dbPostgresql') {
+                            if ($dialectType === 'postgresql') {
                                 $rawSql = $connection->getDialect()->modifyColumn($tableName, $tableColumn->getSchemaName(), $tableColumn, $localFields[$fieldName]);
                             } else {
                                 $rawSql = $connection->getDialect()->modifyColumn($tableName, $tableColumn->getSchemaName(), $tableColumn);
@@ -762,7 +761,7 @@ class " . $className . " extends Migration\n" .
                  */
                 foreach ($localFields as $fieldName => $localField) {
                     if (!isset($fields[$fieldName])) {
-                        if ($dbAdapter === 'dbMysql') {
+                        if ($dialectType === 'mysql') {
                             // We check if there is a foreign key constraint
                             $results = $connection->query("SELECT TABLE_SCHEMA,TABLE_NAME,COLUMN_NAME,CONSTRAINT_NAME,REFERENCED_TABLE_SCHEMA,REFERENCED_TABLE_NAME,REFERENCED_COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE REFERENCED_TABLE_SCHEMA = '" . $schema . "' AND TABLE_NAME = '" . $tableName . "' AND COLUMN_NAME = '" . $fieldName . "'");
                             foreach ($results->fetchAll() as $r) {
@@ -770,7 +769,7 @@ class " . $className . " extends Migration\n" .
                                 $rawSql = $connection->getDialect()->dropForeignKey($r['TABLE_NAME'], $r['TABLE_SCHEMA'], $r['CONSTRAINT_NAME']);
                                 $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
                             }
-                        } elseif ($dbAdapter === 'dbPostgresql') {
+                        } elseif ($dialectType === 'postgresql') {
                             $sqlconstraint = $this->getPGSQLConstraint($tableName, $fieldName);
                             $results = $connection->query($sqlconstraint);
                             foreach ($results->fetchAll() as $r) {
@@ -788,7 +787,7 @@ class " . $className . " extends Migration\n" .
                  * CREATE TABLE IF NOT EXISTS
                  */
                 $rawSql = $connection->getDialect()->createTable($tableName, $schema, $definition);
-                if ($dbAdapter === 'dbPostgresql') {
+                if ($dialectType === 'postgresql') {
                     $sqlInstructions = explode(';', $rawSql);
                     foreach ($sqlInstructions as $instruction) {
                         if ($instruction !== "" && strpos($instruction, '_pkey" ON') === false) {
@@ -805,14 +804,14 @@ class " . $className . " extends Migration\n" .
         /**
          * DROP FOREIGN KEY
          */
-        if ($tableExists === true && ($dbAdapter === 'dbMysql' || $dbAdapter === 'dbPostgresql')) {
+        if ($tableExists === true && ($dialectType === 'mysql' || $dialectType === 'postgresql')) {
             $actualReferences = $connection->describeReferences($tableName, $schema);
             /* @var $actualReference \Phalcon\Db\Reference */
             foreach ($actualReferences as $actualReference) {
                 $foreignKeyExists = false;
 
                 for ($i = count($foreignKeys) - 1; $i >= 0; --$i) {
-                    if ($dbAdapter === 'dbMysql') {
+                    if ($dialectType === 'mysql') {
                         $rules = $connection->query('SELECT UPDATE_RULE, DELETE_RULE FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_NAME="' . $actualReference->getName() . '" AND CONSTRAINT_SCHEMA ="' . $actualReference->getReferencedSchema() . '"');
                         $rules = $rules->fetch();
 
@@ -887,7 +886,7 @@ class " . $className . " extends Migration\n" .
                     $indexes[$tableIndex->getName()] = $tableIndex;
                 }
 
-                if ($dbAdapter === 'dbPostgresql') {
+                if ($dialectType === 'postgresql') {
                     $rawSql = $connection->getDialect()->modifyColumn($tableName, $tableColumn->getSchemaName(), $tableColumn, $localFields[$fieldName]);
                 }
 
@@ -904,7 +903,7 @@ class " . $className . " extends Migration\n" .
                             $deleted = false;
                             $localIndexes[$actualIndex->getName()] = $actualIndex->getColumns();
                             break;
-                        } elseif (substr($actualIndex->getName(), 0, 3) !== 'IDX' && ($dbAdapter !== 'dbCassandra') && ($dbAdapter !== 'dbPostgresql')) {
+                        } elseif (substr($actualIndex->getName(), 0, 3) !== 'IDX' && ($dialectType !== 'cassandra') && ($dialectType !== 'postgresql')) {
                             $deleted = false;
                             break;
                         }
@@ -1002,15 +1001,19 @@ EOT;
         $sql = array();
 
 
-        foreach ($this->adapters as $dbAdapter => $bool) {
+        foreach ($this->adapters as $dbAdapter) {
             $connection = $this->getDI()->get($dbAdapter);
-            if ($dbAdapter === 'dbPostgresql') {
+            if ($connection->getDialectType() === 'postgresql') {
                 $schema = $connection->getDescriptor()['schema'];
-            } elseif ($dbAdapter === 'dbCassandra') {
+
+            } elseif ($connection->getDialectType() === 'cassandra') {
                 $schema = $connection->getDescriptor()['keyspace'];
+
             } else {
                 $schema = $connection->getDescriptor()['dbname'];
+
             }
+
             $existingTables = $connection->listTables();
 
             foreach ($existingTables as $existingTable) {
