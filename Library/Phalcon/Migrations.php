@@ -6,8 +6,10 @@ use Phalcon\Annotations\ModelStrategy;
 use Phalcon\Db\Adapter\Cassandra;
 use Phalcon\Db\Adapter\Pdo;
 use Phalcon\Db\Adapter\Pdo\Mysql;
+use Phalcon\Db\Dialect;
 use Phalcon\Events\Manager;
 use Phalcon\Logger\Adapter\File;
+use Phalcon\Migrations\DbProfiler;
 use Phalcon\Mvc\ModelInterface;
 use Phalcon\Script\Color;
 use Phalcon\Migrations\Version;
@@ -111,9 +113,9 @@ class Migrations extends Injectable
             $lastMig = $connection->fetchOne('SELECT * FROM migration ORDER BY id DESC', \PDO::FETCH_ASSOC);
         } catch (\PDOException $ex) {
             if ($this->migrationAdapter === 'dbMysql') {
-                $connection->query('CREATE TABLE migration (`id` INT NOT NULL AUTO_INCREMENT,`version` VARCHAR(45) NOT NULL,`run_at` DATETIME NOT NULL, PRIMARY KEY (`id`))');
+                $connection->execute('CREATE TABLE migration (`id` INT NOT NULL AUTO_INCREMENT,`version` VARCHAR(45) NOT NULL,`run_at` DATETIME NOT NULL, PRIMARY KEY (`id`))');
             } else {
-                $connection->query('CREATE TABLE "public"."migration" ("id" SERIAL NOT NULL,"version" CHARACTER VARYING(45),"run_at" TIMESTAMP,PRIMARY KEY ("id"));');
+                $connection->execute('CREATE TABLE "public"."migration" ("id" SERIAL NOT NULL,"version" CHARACTER VARYING(45),"run_at" TIMESTAMP,PRIMARY KEY ("id"));');
             }
 
         }
@@ -316,7 +318,7 @@ class " . $className . " extends Migration\n" .
                 } elseif ($model->getReadConnection()->getDialectType() === 'mysql') {
                     $tableDetails = $this->_detailMysqlTable($modelName, $model);
                 } elseif ($model->getReadConnection()->getDialectType() === 'cassandra') {
-                    $tableDetails = $this->_detailCassandraTable($modelName, $model);
+                    $tableDetails = $this->_detailCassandraTable($model);
                 }
 
                 $globalTablesDetails[] = $tableDetails;
@@ -353,7 +355,6 @@ class " . $className . " extends Migration\n" .
         $modelsManager = $this->_getModelsManager();
 
         $table = $model->getSource();
-        $schema = $model->getSchema();
         $foreignKeys = array();
         $tableDefinition = array();
 
@@ -437,7 +438,6 @@ class " . $className . " extends Migration\n" .
 
         return array(
             'table' => $table,
-            'schema' => $schema,
             'tableDefinition' => $tableDefinition,
             'indexesDefinition' => $indexesDefinition,
             'foreignKeys' => $foreignKeys,
@@ -456,7 +456,6 @@ class " . $className . " extends Migration\n" .
         $modelsManager = $this->_getModelsManager();
 
         $table = $model->getSource();
-        $schema = $model->getSchema();
         $foreignKeys = array();
         $tableDefinition = array();
 
@@ -543,7 +542,6 @@ class " . $className . " extends Migration\n" .
 
         return array(
             'table' => $table,
-            'schema' => $schema,
             'tableDefinition' => $tableDefinition,
             'indexesDefinition' => $indexesDefinition,
             'foreignKeys' => $foreignKeys,
@@ -552,16 +550,13 @@ class " . $className . " extends Migration\n" .
     }
 
     /**
-     * @param $modelName
      * @param $model
      * @return array
-     * @throws CommandsException
      */
-    protected function _detailCassandraTable($modelName, $model)
+    protected function _detailCassandraTable($model)
     {
         $modelsMetadata = $this->_getModelsMetadata();
         $table = $model->getSource();
-        $schema = $model->getSchema();
         $tableDefinition = array();
         $fieldTypes = $modelsMetadata->getDataTypes($model);
         $indexesFields = $modelsMetadata->readMetaDataIndex($model, ModelStrategy::METADATA_TABLE_INDEXES);
@@ -580,7 +575,6 @@ class " . $className . " extends Migration\n" .
 
         return array(
             'table' => $table,
-            'schema' => $schema,
             'tableDefinition' => $tableDefinition,
             'indexesDefinition' => $indexesDefinition,
             'foreignKeys' => [],
@@ -605,6 +599,8 @@ class " . $className . " extends Migration\n" .
         $ignoreDropForeignKeys = array();
         /** @var \Phalcon\Db\Adapter $connection */
         $connection = $model->getReadConnection();
+        /** @var Dialect $dialect */
+        $dialect = $connection->getDialect();
 
         if ($dialectType === 'postgresql') {
             $schema = $connection->getDescriptor()['schema'];
@@ -639,17 +635,16 @@ class " . $className . " extends Migration\n" .
                 }
 
                 foreach ($fields as $fieldName => $tableColumn) {
-                    if ($dialectType === 'postgresql') {
-                        $schema = $connection->getDescriptor()['schema'];
-                    }
-
 
                     if (!isset($localFields[$fieldName])) {
                         /**
                          * ADD COLUMN
                          */
-                        $rawSql = $connection->getDialect()->addColumn($tableName, $tableColumn->getSchemaName(), $tableColumn);
-                        $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
+                        $rawSql = $dialect->addColumn($tableName, $schema, $tableColumn);
+                        if ($rawSql !== '') {
+                            $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
+                        }
+
                     } else {
 
                         /**
@@ -692,8 +687,10 @@ class " . $className . " extends Migration\n" .
                                     /**
                                      * DROP FOREIGN KEY BECAUSE WE CHANGE THE CURRENT COLUMN
                                      */
-                                    $rawSql = $connection->getDialect()->dropForeignKey($r['TABLE_NAME'], $r['TABLE_SCHEMA'], $r['CONSTRAINT_NAME']);
-                                    $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
+                                    $rawSql = $dialect->dropForeignKey($r['TABLE_NAME'], $schema, $r['CONSTRAINT_NAME']);
+                                    if ($rawSql !== '') {
+                                        $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
+                                    }
                                     $existingForeignKeys[] = $r;
                                 }
                             } elseif ($dialectType === 'postgresql') {
@@ -704,7 +701,7 @@ class " . $className . " extends Migration\n" .
                                     $r['UPDATE_RULE'] = $r['on_update'];
                                     $r['DELETE_RULE'] = $r['on_delete'];
                                     $r['TABLE_NAME'] = $r['table_name'];
-                                    $r['TABLE_SCHEMA'] = $r['constraint_schema'];
+                                    $r['TABLE_SCHEMA'] = $schema;
                                     $r['CONSTRAINT_NAME'] = $r['constraint_name'];
                                     $r['REFERENCED_TABLE_SCHEMA'] = $r['constraint_schema'];
                                     $r['REFERENCED_TABLE_NAME'] = $r['references_table'];
@@ -714,8 +711,10 @@ class " . $className . " extends Migration\n" .
                                     /**
                                      * DROP FOREIGN KEY BECAUSE WE CHANGE THE CURRENT COLUMN
                                      */
-                                    $rawSql = $connection->getDialect()->dropForeignKey($r['TABLE_NAME'], $r['TABLE_SCHEMA'], $r['CONSTRAINT_NAME']);
-                                    $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
+                                    $rawSql = $dialect->dropForeignKey($r['TABLE_NAME'], $schema, $r['CONSTRAINT_NAME']);
+                                    if ($rawSql !== '') {
+                                        $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
+                                    }
                                     $existingForeignKeys[] = $r;
                                 }
                             }
@@ -724,20 +723,22 @@ class " . $className . " extends Migration\n" .
                              * ALTER TABLE
                              */
                             if ($dialectType === 'postgresql') {
-                                $rawSql = $connection->getDialect()->modifyColumn($tableName, $tableColumn->getSchemaName(), $tableColumn, $localFields[$fieldName]);
+                                $rawSql = $dialect->modifyColumn($tableName, $schema, $tableColumn, $localFields[$fieldName]);
                             } else {
-                                $rawSql = $connection->getDialect()->modifyColumn($tableName, $tableColumn->getSchemaName(), $tableColumn);
+                                $rawSql = $dialect->modifyColumn($tableName, $schema, $tableColumn);
                             }
-                            $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
+                            if ($rawSql !== '') {
+                                $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
+                            }
 
                             if ($existingForeignKeys) {
                                 foreach ($existingForeignKeys as $r) {
                                     /**
                                      * ADD FOREIGN KEY AFTER DROP ONE (TO CHANGE IT)
                                      */
-                                    $rawSql = $connection->getDialect()->addForeignKey(
+                                    $rawSql = $dialect->addForeignKey(
                                         $r['TABLE_NAME'],
-                                        $r['TABLE_SCHEMA'],
+                                        $schema,
                                         new Reference(
                                             $r['CONSTRAINT_NAME'],
                                             array(
@@ -749,7 +750,9 @@ class " . $className . " extends Migration\n" .
                                                 'onDelete' => $r['DELETE_RULE']
                                             )
                                         ));
-                                    $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
+                                    if ($rawSql !== '') {
+                                        $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
+                                    }
                                 }
                             }
                         }
@@ -766,36 +769,46 @@ class " . $className . " extends Migration\n" .
                             $results = $connection->query("SELECT TABLE_SCHEMA,TABLE_NAME,COLUMN_NAME,CONSTRAINT_NAME,REFERENCED_TABLE_SCHEMA,REFERENCED_TABLE_NAME,REFERENCED_COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE REFERENCED_TABLE_SCHEMA = '" . $schema . "' AND TABLE_NAME = '" . $tableName . "' AND COLUMN_NAME = '" . $fieldName . "'");
                             foreach ($results->fetchAll() as $r) {
                                 $ignoreDropForeignKeys[] = $r['CONSTRAINT_NAME'];
-                                $rawSql = $connection->getDialect()->dropForeignKey($r['TABLE_NAME'], $r['TABLE_SCHEMA'], $r['CONSTRAINT_NAME']);
-                                $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
+                                $rawSql = $dialect->dropForeignKey($r['TABLE_NAME'], $schema, $r['CONSTRAINT_NAME']);
+                                if ($rawSql !== '') {
+                                    $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
+                                }
                             }
                         } elseif ($dialectType === 'postgresql') {
                             $sqlconstraint = $this->getPGSQLConstraint($tableName, $fieldName);
                             $results = $connection->query($sqlconstraint);
                             foreach ($results->fetchAll() as $r) {
                                 $ignoreDropForeignKeys[] = $r['CONSTRAINT_NAME'];
-                                $rawSql = $connection->getDialect()->dropForeignKey($r['table_name'], $r['constraint_schema'], $r['constraint_name']);
-                                $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
+                                $rawSql = $dialect->dropForeignKey($r['table_name'], $schema, $r['constraint_name']);
+                                if ($rawSql !== '') {
+                                    $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
+                                }
                             }
                         }
-                        $rawSql = $connection->getDialect()->dropColumn($tableName, $schema, $fieldName);
-                        $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
+                        $rawSql = $dialect->dropColumn($tableName, $schema, $fieldName);
+                        if ($rawSql !== '') {
+                            $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
+                        }
                     }
                 }
             } else {
                 /**
                  * CREATE TABLE IF NOT EXISTS
                  */
-                $rawSql = $connection->getDialect()->createTable($tableName, $schema, $definition);
+                $rawSql = $dialect->createTable($tableName, $schema, $definition);
                 if ($dialectType === 'postgresql') {
                     $sqlInstructions = explode(';', $rawSql);
                     foreach ($sqlInstructions as $instruction) {
                         if ($instruction !== "" && strpos($instruction, '_pkey" ON') === false) {
-                            $sql[] = '$this->' . $dbAdapter . '->query(\'' . $instruction . '\');';
+                            if ($rawSql !== '') {
+                                $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
+                            }
                         }
                     }
                 } else {
-                    $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
+                    if ($rawSql !== '') {
+                        $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
+                    }
                 }
 
             }
@@ -842,12 +855,14 @@ class " . $className . " extends Migration\n" .
                 }
 
                 if (!$foreignKeyExists && !in_array($actualReference->getName(), $ignoreDropForeignKeys)) {
-                    $rawSql = $connection->getDialect()->dropForeignKey(
+                    $rawSql = $dialect->dropForeignKey(
                         $tableName,
-                        $actualReference->getReferencedSchema(),
+                        $schema,
                         $actualReference->getName()
                     );
-                    $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
+                    if ($rawSql !== '') {
+                        $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
+                    }
                 }
             }
         }
@@ -857,9 +872,9 @@ class " . $className . " extends Migration\n" .
          */
         if ($foreignKeys) {
             foreach ($foreignKeys as $foreignKey) {
-                $rawSql = $connection->getDialect()->addForeignKey(
+                $rawSql = $dialect->addForeignKey(
                     $tableName,
-                    $connection->getDescriptor()['dbname'],
+                    $schema,
                     new Reference(
                         $foreignKey['name'],
                         array(
@@ -871,7 +886,9 @@ class " . $className . " extends Migration\n" .
                             'onDelete' => $foreignKey['action']
                         )
                     ));
-                $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
+                if ($rawSql !== '') {
+                    $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
+                }
             }
         }
 
@@ -887,7 +904,7 @@ class " . $className . " extends Migration\n" .
                 }
 
                 if ($dialectType === 'postgresql') {
-                    $rawSql = $connection->getDialect()->modifyColumn($tableName, $tableColumn->getSchemaName(), $tableColumn, $localFields[$fieldName]);
+                    $rawSql = $dialect->modifyColumn($tableName, $schema, $tableColumn, $localFields[$fieldName]);
                 }
 
                 $localIndexes = array();
@@ -911,8 +928,10 @@ class " . $className . " extends Migration\n" .
 
 
                     if ($deleted) {
-                        $rawSql = $connection->getDialect()->dropIndex($tableName, $tableColumn->getSchemaName(), $actualIndexName);
-                        $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
+                        $rawSql = $dialect->dropIndex($tableName, $schema, $actualIndexName);
+                        if ($rawSql !== '') {
+                            $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
+                        }
                     }
                 }
 
@@ -920,11 +939,15 @@ class " . $className . " extends Migration\n" .
                     $tableIndexName = $tableIndex->getName();
                     if (!isset($localIndexes[$tableIndexName])) {
                         if ($tableIndexName == 'PRIMARY') {
-                            $rawSql = $connection->getDialect()->addPrimaryKey($tableName, $tableColumn->getSchemaName(), $tableIndex);
-                            $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
+                            $rawSql = $dialect->addPrimaryKey($tableName, $schema, $tableIndex);
+                            if ($rawSql !== '') {
+                                $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
+                            }
                         } else {
-                            $rawSql = $connection->getDialect()->addIndex($tableName, $tableColumn->getSchemaName(), $tableIndex);
-                            $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
+                            $rawSql = $dialect->addIndex($tableName, $schema, $tableIndex);
+                            if ($rawSql !== '') {
+                                $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
+                            }
                         }
                     } else {
                         $changed = false;
@@ -940,11 +963,15 @@ class " . $className . " extends Migration\n" .
                         }
                         if ($changed == true) {
                             if ($tableIndex->getName() == 'PRIMARY') {
-                                $rawSql = $connection->getDialect()->dropPrimaryKey($tableName, $tableColumn->getSchemaName());
-                                $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
+                                $rawSql = $dialect->dropPrimaryKey($tableName, $schema);
+                                if ($rawSql !== '') {
+                                    $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
+                                }
 
-                                $rawSql = $connection->getDialect()->addPrimaryKey($tableName, $tableColumn->getSchemaName(), $tableIndex);
-                                $sql[] = '$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');';
+                                $rawSql = $dialect->addPrimaryKey($tableName, $schema, $tableIndex);
+                                if ($rawSql !== '') {
+                                    $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
+                                }
                             }
                         }
                     }
@@ -1032,7 +1059,7 @@ EOT;
                 if ($tableDropped) {
                     $rawSql = $connection->getDialect()->dropTable($existingTable, $schema);
 
-                    $sqlInstruction = ['$this->' . $dbAdapter . '->query(\'' . $rawSql . '\');'];
+                    $sqlInstruction = ['$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');'];
                     $sql[] = implode("\n        ", str_replace("\t", '', str_replace("\n", '', $sqlInstruction))) . "\n        ";
                 }
             }
