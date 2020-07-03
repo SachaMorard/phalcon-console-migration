@@ -14,7 +14,7 @@
         "php": ">=5.5",
         "ext-phalcon": "^3.0",
         "sachoo/phalcon-model-annotations": "1.*",
-        "sachoo/phalcon-console": "1.*"
+        "sachoo/phalcon-console": "2.*"
     },
     "autoload": {
         "psr-4" : {
