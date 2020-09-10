@@ -800,9 +800,7 @@ class " . $className . " extends Migration\n" .
                     $sqlInstructions = explode(';', $rawSql);
                     foreach ($sqlInstructions as $instruction) {
                         if ($instruction !== "" && strpos($instruction, '_pkey" ON') === false) {
-                            if ($rawSql !== '') {
-                                $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
-                            }
+                            $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $instruction . '\');';
                         }
                     }
                 } else {
