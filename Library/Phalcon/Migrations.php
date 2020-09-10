@@ -778,7 +778,7 @@ class " . $className . " extends Migration\n" .
                             $sqlconstraint = $this->getPGSQLConstraint($tableName, $fieldName);
                             $results = $connection->query($sqlconstraint);
                             foreach ($results->fetchAll() as $r) {
-                                $ignoreDropForeignKeys[] = $r['CONSTRAINT_NAME'];
+                                $ignoreDropForeignKeys[] = $r['constraint_name'];
                                 $rawSql = $dialect->dropForeignKey($r['table_name'], $schema, $r['constraint_name']);
                                 if ($rawSql !== '') {
                                     $sql[] = '$this->' . $dbAdapter . '->execute(\'' . $rawSql . '\');';
